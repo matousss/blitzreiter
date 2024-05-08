@@ -82,13 +82,14 @@ bool checkHead(byte *);
 // CameraServer cameraServer = CameraServer();
 esp_err_t sendFrame(WiFiClient &client);
 
+byte buffer[32];
+
 void loop()
 {
-  if (!WiFi.status == WL_CONNECTED)
+  if (!WiFi.status() == WL_CONNECTED)
   {
     Serial.println("Reconnecting to WiFi");
     setupWiFi();
-    setupServer();
   }
 
   Serial.println("Waiting for client...");
@@ -97,25 +98,22 @@ void loop()
   if (client)
   {
     Serial.println("Client connected!");
-    auto buffer = new byte[messageLen];
     while (client.connected())
     {
-      client.read(buffer, messageHeadLen);
-      if (checkHead(buffer))
+
+      if (client.read(buffer, messageHeadLen) == messageHeadLen && checkHead(buffer))
       {
-        // unsigned test = 5;
+        // int speed, steer;
+        // memcpy(&speed, buffer + messageHeadLen, sizeof(int));
+        // memcpy(&steer, buffer + messageHeadLen + sizeof(int), sizeof(int));
+        // Serial.printf("speed: %d, steer: %d\n", speed, steer);
+
         sendFrame(client);
-        // byte *message = new byte[headLen + sizeof(unsigned)];
-        // memcpy(message, messageHead, messageHeadLen);
-        // memcpy(message + messageHeadLen, &test, sizeof(unsigned));
-        // client.write(message, headLen + sizeof(unsigned));
-        // delete[] message;
       }
       else
         Serial.println("Invalid head");
       delay(10);
     }
-    delete[] buffer;
   }
 
   delay(500);

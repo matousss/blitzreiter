@@ -8,16 +8,12 @@
 
 #define PIN_X 1
 #define PIN_Y 2
-// #define PIN_SW 21
 
-#define SCREEN_WIDTH 320
-#define SCREEN_HEIGHT 240
 #define SCREEN_ORIENTATION 3
 #define SCREEN_PIN_LED 7
 
 #define WIFI_SSID "blitzreiter"
 #define WIFI_PSK "Genesis23"
-// #define REITER_IP "192.168.1.171"
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
 
@@ -39,9 +35,7 @@ void setupServer();
 bool checkHead(byte *);
 void createMessage(byte *);
 
-constexpr unsigned headLen = 5;
-
-const byte messageHead[headLen] = {0xC5, 0x33, 0xFC, 0x33, 0xFC};
+const byte messageHead[] = {0xC5, 0x33, 0xFC, 0x33, 0xFC};
 constexpr unsigned messageHeadLen = sizeof(messageHead);
 constexpr unsigned messageLen = messageHeadLen + 2 * sizeof(int);
 
@@ -101,13 +95,24 @@ void fetchFrame(void *)
     if (client.connected())
     {
       memcpy(buffer, &messageHead, messageHeadLen);
-      client.write(buffer, headLen);
+      client.write(buffer, messageHeadLen);
       client.read(buffer, messageHeadLen + 4);
       if (checkHead(buffer))
       {
-        unsigned len;
+        unsigned len = 0;
 
         memcpy(&len, buffer + messageHeadLen, 4);
+        if (len > 10000)
+        {
+          Serial.println("Received len bigger than 10000 - that must be corruption >:(");
+          while (client.read(buffer, 1))
+          {
+            // read bytes until empty
+          };
+          delay(100);
+          continue;
+        }
+
         Serial.printf("Waiting for: %u bytes\n", len);
         delay(20);
         auto imgBuffer = new u_int8_t[len];
@@ -338,14 +343,14 @@ void createMessage(byte *buffer)
   int speed = map(xy.second, -2048, 2048, -255, 255);
   int steer = map(xy.first, -2048, 2048, -255, 255);
 
-  // memcpy(buffer, &messageHead, messageHeadLen);
+  memcpy(buffer, &messageHead, messageHeadLen);
   memcpy(buffer + messageHeadLen, &speed, sizeof(int));
   memcpy(buffer + messageHeadLen + sizeof(int), &steer, sizeof(int));
 }
 
 bool checkHead(byte *buffer)
 {
-  for (unsigned i = 0; i < headLen; i++)
+  for (unsigned i = 0; i < messageHeadLen; i++)
   {
     if (buffer[i] != messageHead[i])
       return false;
