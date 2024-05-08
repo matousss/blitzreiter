@@ -46,16 +46,121 @@ constexpr unsigned messageHeadLen = sizeof(messageHead);
 constexpr unsigned messageLen = messageHeadLen + 2 * sizeof(int);
 
 JPEGDEC jpeg;
-struct JPEGData
+struct JPEGBlock
 {
   uint16_t pPixels[20000];
   int x;
   int y;
-  int iWidth;
-  int iHeight;
+  int w;
+  int h;
 };
 
-JPEGData *jpegBlock;
+JPEGBlock *jpegBlock = nullptr;
+byte buffer[32];
+WiFiClient client;
+
+volatile bool doDrawing = false;
+
+int drawCallback(JPEGDRAW *pDraw)
+{
+  for (;;)
+  {
+    if (doDrawing)
+    {
+      taskYIELD();
+      continue;
+    }
+
+    memcpy(jpegBlock->pPixels, pDraw->pPixels, pDraw->iWidth * pDraw->iHeight * sizeof(uint16_t));
+    jpegBlock->x = pDraw->x;
+    jpegBlock->y = pDraw->y;
+    jpegBlock->w = pDraw->iWidth;
+    jpegBlock->h = pDraw->iHeight;
+    doDrawing = true;
+    return 1;
+  }
+}
+
+void draw(void *)
+{
+  for (;;)
+  {
+    if (doDrawing)
+    {
+      tft.pushImage(jpegBlock->x, jpegBlock->y, jpegBlock->w, jpegBlock->h, jpegBlock->pPixels);
+
+      doDrawing = false;
+    }
+  }
+}
+
+void fetchFrame(void *)
+{
+  for (;;)
+  {
+    if (client.connected())
+    {
+      memcpy(buffer, &messageHead, messageHeadLen);
+      client.write(buffer, headLen);
+      client.read(buffer, messageHeadLen + 4);
+      if (checkHead(buffer))
+      {
+        unsigned len;
+
+        memcpy(&len, buffer + messageHeadLen, 4);
+        Serial.printf("Waiting for: %u bytes\n", len);
+        delay(20);
+        auto imgBuffer = new u_int8_t[len];
+        int read = 0;
+        unsigned counter = 0;
+        while (read < len)
+        {
+          unsigned chunkLen = client.read(imgBuffer + read, len - read);
+          if (chunkLen == 0)
+          {
+            if (counter++ == 1000)
+            {
+              Serial.println("No data received");
+              counter = 0;
+              len = 0;
+            }
+          }
+          else
+          {
+            counter = 0;
+          }
+          read += chunkLen;
+        }
+        Serial.println("Received data");
+        if (len > 0)
+        {
+          if (jpeg.openRAM(imgBuffer, len, drawCallback))
+          {
+            jpeg.setPixelType(RGB565_BIG_ENDIAN);
+
+            if (jpeg.decode(0, 0, 1))
+            {
+              Serial.println("Decoded!");
+            }
+            else
+            {
+              Serial.println("Could not decode jpeg");
+            }
+          }
+          else
+          {
+            Serial.println("Could not open jpeg");
+          }
+        }
+        delete[] imgBuffer;
+      }
+      else
+        Serial.println("Invalid head");
+    }
+    else
+      delay(100);
+  }
+}
 
 void setup()
 {
@@ -64,8 +169,10 @@ void setup()
   tft.init();
   setupScreen();
   setupWiFi();
+  xTaskCreatePinnedToCore(draw, "draw", 5000, nullptr, 0, nullptr, 0);
+  xTaskCreatePinnedToCore(fetchFrame, "fetchFrame", 5000, nullptr, 0, nullptr, 1);
   setupServer();
-  jpegBlock = new JPEGData;
+  jpegBlock = new JPEGBlock;
 }
 
 void printAPClients()
@@ -87,23 +194,6 @@ void printAPClients()
     Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
   }
 }
-
-int copyJpegBlock(JPEGDRAW *pDraw)
-{
-  for (;;)
-  {
-    memcpy(jpegBlock->pPixels, pDraw->pPixels, pDraw->iWidth * pDraw->iHeight * sizeof(uint16_t));
-    jpegBlock->x = pDraw->x;
-    jpegBlock->y = pDraw->y;
-    jpegBlock->iWidth = pDraw->iWidth;
-    jpegBlock->iHeight = pDraw->iHeight;
-
-    tft.pushImage(jpegBlock->x, jpegBlock->y, jpegBlock->iWidth, jpegBlock->iHeight, jpegBlock->pPixels);
-    return 1;
-  }
-}
-
-byte buffer[32];
 
 void loop()
 {
@@ -127,77 +217,35 @@ void loop()
   //   }
   //   delete[] buffer;
   // }
-  wifi_sta_list_t stations;
-  tcpip_adapter_sta_list_t stationsAdapters;
-  esp_wifi_ap_get_sta_list(&stations);
-  tcpip_adapter_get_sta_list(&stations, &stationsAdapters);
-
-  if (stationsAdapters.num > 0)
+  if (!client.connected())
   {
-    WiFiClient client;
-    Serial.println("-----------");
-    for (unsigned i = 0; i < stationsAdapters.num; i++)
-    {
-      tcpip_adapter_sta_info_t station = stationsAdapters.sta[i];
-      Serial.print((String) "[+] Device " + i + " | MAC : ");
-      Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
-      ip4_addr_t stationIP;
-      stationIP.addr = station.ip.addr;
-      Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
-    }
+    wifi_sta_list_t stations;
+    tcpip_adapter_sta_list_t stationsAdapters;
+    esp_wifi_ap_get_sta_list(&stations);
+    tcpip_adapter_get_sta_list(&stations, &stationsAdapters);
 
-    for (unsigned i = 0; i < stationsAdapters.num; i++)
+    if (stationsAdapters.num > 0)
     {
-      ip4_addr_t stationIP;
-      stationIP.addr = stationsAdapters.sta[i].ip.addr;
-      Serial.println((String) "Trying :" + ip4addr_ntoa(&stationIP));
-      client.connect(ip4addr_ntoa(&stationIP), PORT);
-
-      while (client.connected())
+      Serial.println("-----------");
+      for (unsigned i = 0; i < stationsAdapters.num; i++)
       {
-        memcpy(buffer, &messageHead, messageHeadLen);
-        client.write(buffer, headLen);
-        client.read(buffer, messageHeadLen + 4);
-        if (checkHead(buffer))
-        {
-          unsigned len;
-
-          memcpy(&len, buffer + messageHeadLen, 4);
-          Serial.printf("Waiting for: %u bytes\n", len);
-          delay(200);
-          auto img_buffer = new u_int8_t[len];
-          int read = 0;
-          while (read < len)
-          {
-            read += client.read(img_buffer + read, len - read);
-          }
-          Serial.println("Received data");
-          if (len > 0)
-          {
-            if (jpeg.openRAM(img_buffer, len, copyJpegBlock))
-            {
-              jpeg.setPixelType(RGB565_BIG_ENDIAN);
-
-              if (jpeg.decode(0, 0, 1))
-              {
-                Serial.println("Decoded!");
-              }
-              else
-              {
-                Serial.println("Could not decode jpeg");
-              }
-            }
-            else
-            {
-              Serial.println("Could not open jpeg");
-            }
-          }
-          delete[] img_buffer;
-        }
-        else
-          Serial.println("Invalid head");
+        tcpip_adapter_sta_info_t station = stationsAdapters.sta[i];
+        Serial.print((String) "[+] Device " + i + " | MAC : ");
+        Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
+        ip4_addr_t stationIP;
+        stationIP.addr = station.ip.addr;
+        Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
       }
-      Serial.println("Client disconnected");
+
+      for (unsigned i = 0; i < stationsAdapters.num; i++)
+      {
+        ip4_addr_t stationIP;
+        stationIP.addr = stationsAdapters.sta[i].ip.addr;
+        Serial.println((String) "Trying :" + ip4addr_ntoa(&stationIP));
+        client.connect(ip4addr_ntoa(&stationIP), PORT);
+
+        Serial.println("Client disconnected");
+      }
     }
   }
 
