@@ -3,7 +3,7 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <WiFi.h>
-
+#include <esp_wifi.h>
 #include "Joystick.h"
 
 #define PIN_X 1
@@ -15,9 +15,15 @@
 #define SCREEN_ORIENTATION 3
 #define SCREEN_PIN_LED 7
 
-#define WIFI_SSID "Skynet"
+#define WIFI_SSID "blitzreiter"
 #define WIFI_PSK "Genesis23"
 // #define REITER_IP "192.168.1.171"
+
+#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+
+const IPAddress local_ip(192, 168, 1, 1);
+const IPAddress gateway(192, 168, 1, 1);
+const IPAddress subnet(255, 255, 255, 0);
 
 TFT_eSPI tft = TFT_eSPI();
 Joystick joystick = Joystick(PIN_X, PIN_Y);
@@ -40,6 +46,16 @@ constexpr unsigned messageHeadLen = sizeof(messageHead);
 constexpr unsigned messageLen = messageHeadLen + 2 * sizeof(int);
 
 JPEGDEC jpeg;
+struct JPEGData
+{
+  uint16_t pPixels[20000];
+  int x;
+  int y;
+  int iWidth;
+  int iHeight;
+};
+
+JPEGData *jpegBlock;
 
 void setup()
 {
@@ -49,29 +65,143 @@ void setup()
   setupScreen();
   setupWiFi();
   setupServer();
+  jpegBlock = new JPEGData;
 }
+
+void printAPClients()
+{
+  wifi_sta_list_t wifi_sta_list;
+  tcpip_adapter_sta_list_t adapter_sta_list;
+  esp_wifi_ap_get_sta_list(&wifi_sta_list);
+  tcpip_adapter_get_sta_list(&wifi_sta_list, &adapter_sta_list);
+
+  if (adapter_sta_list.num > 0)
+    Serial.println("-----------");
+  for (uint8_t i = 0; i < adapter_sta_list.num; i++)
+  {
+    tcpip_adapter_sta_info_t station = adapter_sta_list.sta[i];
+    Serial.print((String) "[+] Device " + i + " | MAC : ");
+    Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
+    ip4_addr_t stationIP;
+    stationIP.addr = station.ip.addr;
+    Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
+  }
+}
+
+int copyJpegBlock(JPEGDRAW *pDraw)
+{
+  for (;;)
+  {
+    memcpy(jpegBlock->pPixels, pDraw->pPixels, pDraw->iWidth * pDraw->iHeight * sizeof(uint16_t));
+    jpegBlock->x = pDraw->x;
+    jpegBlock->y = pDraw->y;
+    jpegBlock->iWidth = pDraw->iWidth;
+    jpegBlock->iHeight = pDraw->iHeight;
+
+    tft.pushImage(jpegBlock->x, jpegBlock->y, jpegBlock->iWidth, jpegBlock->iHeight, jpegBlock->pPixels);
+    return 1;
+  }
+}
+
+byte buffer[32];
 
 void loop()
 {
-  WiFiClient client = server.available();
+  // WiFiClient client = server.available();
 
-  if (client)
+  // if (client)
+  // {
+  //   tft.println("Client connected!");
+  //   auto buffer = new byte[messageLen];
+  //   while (client.connected())
+  //   {
+  //     client.read(buffer, messageHeadLen);
+  //     if (checkHead(buffer))
+  //     {
+  //       createMessage(buffer);
+  //       client.write(buffer, messageLen);
+  //       Serial.println("Sent");
+  //     }
+
+  //     delay(10);
+  //   }
+  //   delete[] buffer;
+  // }
+  wifi_sta_list_t stations;
+  tcpip_adapter_sta_list_t stationsAdapters;
+  esp_wifi_ap_get_sta_list(&stations);
+  tcpip_adapter_get_sta_list(&stations, &stationsAdapters);
+
+  if (stationsAdapters.num > 0)
   {
-    tft.println("Client connected!");
-    auto buffer = new byte[messageLen];
-    while (client.connected())
+    WiFiClient client;
+    Serial.println("-----------");
+    for (unsigned i = 0; i < stationsAdapters.num; i++)
     {
-      client.read(buffer, messageHeadLen);
-      if (checkHead(buffer))
-      {
-        createMessage(buffer);
-        client.write(buffer, messageLen);
-      }
-
-      delay(10);
+      tcpip_adapter_sta_info_t station = stationsAdapters.sta[i];
+      Serial.print((String) "[+] Device " + i + " | MAC : ");
+      Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
+      ip4_addr_t stationIP;
+      stationIP.addr = station.ip.addr;
+      Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
     }
-    delete[] buffer;
+
+    for (unsigned i = 0; i < stationsAdapters.num; i++)
+    {
+      ip4_addr_t stationIP;
+      stationIP.addr = stationsAdapters.sta[i].ip.addr;
+      Serial.println((String) "Trying :" + ip4addr_ntoa(&stationIP));
+      client.connect(ip4addr_ntoa(&stationIP), PORT);
+
+      while (client.connected())
+      {
+        memcpy(buffer, &messageHead, messageHeadLen);
+        client.write(buffer, headLen);
+        client.read(buffer, messageHeadLen + 4);
+        if (checkHead(buffer))
+        {
+          unsigned len;
+
+          memcpy(&len, buffer + messageHeadLen, 4);
+          Serial.printf("Waiting for: %u bytes\n", len);
+          delay(200);
+          auto img_buffer = new u_int8_t[len];
+          int read = 0;
+          while (read < len)
+          {
+            read += client.read(img_buffer + read, len - read);
+          }
+          Serial.println("Received data");
+          if (len > 0)
+          {
+            if (jpeg.openRAM(img_buffer, len, copyJpegBlock))
+            {
+              jpeg.setPixelType(RGB565_BIG_ENDIAN);
+
+              if (jpeg.decode(0, 0, 1))
+              {
+                Serial.println("Decoded!");
+              }
+              else
+              {
+                Serial.println("Could not decode jpeg");
+              }
+            }
+            else
+            {
+              Serial.println("Could not open jpeg");
+            }
+          }
+          delete[] img_buffer;
+        }
+        else
+          Serial.println("Invalid head");
+      }
+      Serial.println("Client disconnected");
+    }
   }
+
+  delay(500);
 }
 
 void setupScreen()
@@ -97,21 +227,22 @@ void setupScreen()
 
 void setupWiFi()
 {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PSK);
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(local_ip, gateway, subnet);
+  WiFi.softAP(WIFI_SSID, WIFI_PSK);
   WiFi.setSleep(false);
 
-  Serial.print("Connecting to: ");
+  Serial.print("SSID: ");
   Serial.println(WIFI_SSID);
-  tft.print("Connecting to: ");
+  tft.print("SSID: ");
   tft.println(WIFI_SSID);
 
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(1000);
-    Serial.print('.');
-    tft.print('.');
-  }
+  // while (WiFi.status() != WL_CONNECTED)
+  // {
+  //   delay(1000);
+  //   Serial.print('.');
+  //   tft.print('.');
+  // }
   Serial.println();
   tft.println();
 }
@@ -120,7 +251,7 @@ void setupServer()
 {
   server.begin();
   Serial.print("Listening at: ");
-  Serial.print(WiFi.localIP());
+  Serial.print(WiFi.softAPIP());
   Serial.print(':');
   Serial.println(PORT);
 }
@@ -155,8 +286,6 @@ void createMessage(byte *buffer)
   // memcpy(buffer, &messageHead, messageHeadLen);
   memcpy(buffer + messageHeadLen, &speed, sizeof(int));
   memcpy(buffer + messageHeadLen + sizeof(int), &steer, sizeof(int));
-
-  Serial.println("Sent");
 }
 
 bool checkHead(byte *buffer)
