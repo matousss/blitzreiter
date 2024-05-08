@@ -37,11 +37,11 @@ void setup()
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_240X240;
+  config.frame_size = FRAMESIZE_QVGA;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 12;
+  config.jpeg_quality = 10;
   config.fb_count = 1;
 
   // camera init
@@ -60,11 +60,8 @@ void setup()
     s->set_brightness(s, 1);  // up the brightness just a bit
     s->set_saturation(s, -2); // lower the saturation
   }
-  // drop down frame size for higher initial frame rate
-  if (config.pixel_format == PIXFORMAT_JPEG)
-  {
-    s->set_framesize(s, FRAMESIZE_QVGA);
-  }
+
+  s->set_brightness(s, 1);
 
   setupWiFi();
   setupServer();
@@ -165,9 +162,9 @@ esp_err_t sendFrame(WiFiClient &client)
 {
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
-  size_t _jpg_buf_len;
-  uint8_t *_jpg_buf;
-  char *part_buf[64];
+  size_t imgBufferLen;
+  uint8_t *imgBuffer;
+  // char *part_buf[64];
   // static int64_t last_frame = 0;
   // if (!last_frame)
   // {
@@ -183,16 +180,16 @@ esp_err_t sendFrame(WiFiClient &client)
   }
   Serial.println("Camera captured a frame");
 
-  _jpg_buf_len = fb->len;
-  _jpg_buf = fb->buf;
+  imgBufferLen = fb->len;
+  imgBuffer = fb->buf;
 
   byte *message = new byte[headLen + sizeof(unsigned)];
   memcpy(message, messageHead, messageHeadLen);
-  memcpy(message + messageHeadLen, &_jpg_buf_len, sizeof(size_t));
+  memcpy(message + messageHeadLen, &imgBufferLen, sizeof(size_t));
   client.write(message, headLen + sizeof(unsigned));
   delete[] message;
 
-  client.write(_jpg_buf, _jpg_buf_len);
+  client.write(imgBuffer, imgBufferLen);
 
   esp_camera_fb_return(fb);
 
