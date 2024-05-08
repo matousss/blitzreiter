@@ -5,7 +5,7 @@
 #include <esp_timer.h>
 // #include "camera_server.h"
 
-#define WIFI_SSID "Skynet"
+#define WIFI_SSID "blitzreiter"
 #define WIFI_PSK "Genesis23"
 
 void setupWiFi();
@@ -37,30 +37,12 @@ void setup()
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.frame_size = FRAMESIZE_UXGA;
+  config.frame_size = FRAMESIZE_240X240;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 12;
   config.fb_count = 1;
-
-  // if PSRAM IC present, init with UXGA resolution and higher JPEG quality
-  //                      for larger pre-allocated frame buffer.
-  if (config.pixel_format == PIXFORMAT_JPEG)
-  {
-    if (psramFound())
-    {
-      config.jpeg_quality = 10;
-      config.fb_count = 2;
-      config.grab_mode = CAMERA_GRAB_LATEST;
-    }
-    else
-    {
-      // Limit the frame size when PSRAM is not available
-      config.frame_size = FRAMESIZE_SVGA;
-      config.fb_location = CAMERA_FB_IN_DRAM;
-    }
-  }
 
   // camera init
   esp_err_t err = esp_camera_init(&config);
@@ -105,6 +87,12 @@ esp_err_t sendFrame(WiFiClient &client);
 
 void loop()
 {
+  if (!WiFi.status == WL_CONNECTED)
+  {
+    setupWiFi();
+    setupServer();
+  }
+
   Serial.println("Waiting for client...");
   WiFiClient client = server.available();
 
@@ -165,6 +153,7 @@ bool checkHead(byte *buffer)
 
 void setupServer()
 {
+  server.stop();
   server.begin();
   Serial.print("Listening at: ");
   Serial.print(WiFi.localIP());
