@@ -86,6 +86,7 @@ void loop()
 {
   if (!WiFi.status == WL_CONNECTED)
   {
+    Serial.println("Reconnecting to WiFi");
     setupWiFi();
     setupServer();
   }

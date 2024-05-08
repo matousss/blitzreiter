@@ -131,9 +131,10 @@ void fetchFrame(void *)
           }
           read += chunkLen;
         }
-        Serial.println("Received data");
         if (len > 0)
         {
+
+          Serial.println("Received data");
           if (jpeg.openRAM(imgBuffer, len, drawCallback))
           {
             jpeg.setPixelType(RGB565_BIG_ENDIAN);
@@ -155,7 +156,13 @@ void fetchFrame(void *)
         delete[] imgBuffer;
       }
       else
+      {
         Serial.println("Invalid head");
+        while (client.read(buffer, 1))
+        {
+          // read bytes until empty
+        };
+      }
     }
     else
       delay(100);
