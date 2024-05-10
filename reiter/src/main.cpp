@@ -17,11 +17,16 @@ void handleConnection(void *);
 // Network
 constexpr unsigned headLen = 5;
 
-const byte messageHead[headLen] = {0xC5, 0x33, 0xFC, 0x33, 0xFC};
-constexpr unsigned messageHeadLen = sizeof(messageHead);
+const byte messageControl[headLen] = {0xC5, 0x33, 0xFC, 0x33, 0xFC};
+constexpr unsigned messageControlLen = sizeof(messageControl);
+constexpr unsigned messageHeadLen = messageControlLen + 1;
 constexpr unsigned messageLen = messageHeadLen + 2 * sizeof(int);
 
 byte buffer[16];
+
+// Motors
+volatile int speed = 0;
+volatile int steer = 0;
 
 void setup()
 {
@@ -87,7 +92,7 @@ bool checkHead(byte *buffer)
 {
   for (unsigned i = 0; i < headLen; i++)
   {
-    if (buffer[i] != messageHead[i])
+    if (buffer[i] != messageControl[i])
       return false;
   }
   return true;
@@ -118,9 +123,9 @@ esp_err_t sendFrame(WiFiClient &client)
   imgBufferLen = fb->len;
   imgBuffer = fb->buf;
 
-  byte *message = new byte[headLen + sizeof(unsigned)];
-  memcpy(message, messageHead, messageHeadLen);
-  memcpy(message + messageHeadLen, &imgBufferLen, sizeof(size_t));
+  byte *message = new byte[messageHeadLen + sizeof(unsigned)];
+  memcpy(message, messageControl, messageControlLen);
+  memcpy(message + messageControlLen, &imgBufferLen, sizeof(size_t));
   client.write(message, headLen + sizeof(unsigned));
   delete[] message;
 
@@ -179,13 +184,31 @@ void handleConnection(void *)
     {
       if (client.read(buffer, messageHeadLen) == messageHeadLen && checkHead(buffer))
       {
-        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
+        byte cmd = buffer[messageControlLen];
+        Serial.printf("CMD: %d\n", cmd);
+        memset(buffer + messageControlLen, 0, sizeof(buffer) - messageControlLen);
         // int speed, steer;
         // memcpy(&speed, buffer + messageHeadLen, sizeof(int));
         // memcpy(&steer, buffer + messageHeadLen + sizeof(int), sizeof(int));
         // Serial.printf("speed: %d, steer: %d\n", speed, steer);
 
-        sendFrame(client);
+        if (cmd == 1)
+        {
+          sendFrame(client);
+        }
+        if (cmd == 0)
+        {
+          auto start = millis();
+          while (client.available() < 2 * sizeof(int))
+          {
+            delay(1);
+          }
+
+          client.read(buffer, 2 * sizeof(int));
+          memcpy(&speed, buffer, sizeof(int));
+          memcpy(&steer, buffer + sizeof(int), sizeof(int));
+          Serial.printf("speed: %d, steer: %d\n", speed, steer);
+        }
       }
       else
         Serial.println("Invalid head");
