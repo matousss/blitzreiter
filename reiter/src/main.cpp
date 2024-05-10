@@ -64,12 +64,12 @@ void setup()
   s->set_brightness(s, 1);
 
   setupWiFi();
-  setupServer();
+  // setupServer();
 }
 
 constexpr unsigned PORT = 8686;
 
-WiFiServer server(PORT);
+// WiFiServer server(PORT);
 
 constexpr unsigned headLen = 5;
 
@@ -83,19 +83,19 @@ bool checkHead(byte *);
 esp_err_t sendFrame(WiFiClient &client);
 
 byte buffer[16];
+WiFiClient client;
 
 void loop()
 {
-  if (!WiFi.status() == WL_CONNECTED)
+  if (WiFi.status() != WL_CONNECTED)
   {
     Serial.println("Reconnecting to WiFi");
     setupWiFi();
+    delay(500);
   }
 
-  Serial.println("Waiting for client...");
-  WiFiClient client = server.available();
-
-  if (client)
+  Serial.println("Waiting for connection...");
+  if (client.connect(WiFi.gatewayIP(), PORT))
   {
     Serial.println("Client connected!");
     while (client.connected())
@@ -150,16 +150,6 @@ bool checkHead(byte *buffer)
       return false;
   }
   return true;
-}
-
-void setupServer()
-{
-  server.stop();
-  server.begin();
-  Serial.print("Listening at: ");
-  Serial.print(WiFi.localIP());
-  Serial.print(':');
-  Serial.println(PORT);
 }
 
 esp_err_t sendFrame(WiFiClient &client)

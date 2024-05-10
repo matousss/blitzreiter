@@ -51,10 +51,10 @@ struct JPEGBlock
 
 JPEGBlock *jpegBlock = nullptr;
 byte buffer[16];
-WiFiClient client;
 
 volatile bool doDrawing = false;
 
+// jpeg decoding callback, waits for current drawing to end then copies block to `jpegBlock` and enables drawing
 int drawCallback(JPEGDRAW *pDraw)
 {
   for (;;)
@@ -75,6 +75,7 @@ int drawCallback(JPEGDRAW *pDraw)
   }
 }
 
+// threded task - waits for `doDrawing` which indicates new data in `jpegBlock` then show it on display
 void draw(void *)
 {
   for (;;)
@@ -88,103 +89,131 @@ void draw(void *)
   }
 }
 
-void fetchFrame(void *)
+void fetchFrame(WiFiClient &client)
 {
-  for (;;)
+  memcpy(buffer, &messageHead, messageHeadLen);
+  Serial.println("Requesting frame");
+  client.write(buffer, messageHeadLen);
+  client.flush();
+  memset(buffer, 0, sizeof(buffer));
+
+  unsigned long start = millis();
+  Serial.println("Waiting for response");
+  while (client.available() < messageHeadLen + 4)
   {
-    if (client.connected())
+    taskYIELD();
+    if (millis() - start > 1000)
     {
-      memcpy(buffer, &messageHead, messageHeadLen);
-      client.write(buffer, messageHeadLen);
-      client.flush();
-      memset(buffer, 0, sizeof(buffer));
+      Serial.println("Never got response like from your crush (response timeout)");
+      client.stop();
+      return;
+    }
+  }
 
-      while (client.available() < messageHeadLen + 4)
+  client.read(buffer, messageHeadLen + 4);
+  if (checkHead(buffer))
+  {
+    unsigned len = 0;
+
+    memcpy(&len, buffer + messageHeadLen, 4);
+
+    memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
+
+    if (len > 10000)
+    {
+      Serial.println("Received len bigger than 10000 - that must be corruption >:(");
+      while (client.read(buffer, 1))
       {
-        taskYIELD();
-      }
+        // read bytes until empty
+      };
+      delay(100);
+      return;
+    }
 
-      client.read(buffer, messageHeadLen + 4);
-      if (checkHead(buffer))
+    Serial.printf("Waiting for: %u bytes\n", len);
+    delay(20);
+    auto imgBuffer = new u_int8_t[len];
+    int read = 0;
+    unsigned counter = 0;
+    while (read < len)
+    {
+      unsigned chunkLen = client.read(imgBuffer + read, len - read);
+      if (chunkLen == 0)
       {
-        unsigned len = 0;
-
-        memcpy(&len, buffer + messageHeadLen, 4);
-
-        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
-
-        if (len > 10000)
+        if (counter++ == 200)
         {
-          Serial.println("Received len bigger than 10000 - that must be corruption >:(");
-          while (client.read(buffer, 1))
-          {
-            // read bytes until empty
-          };
+          counter = 0;
+          len = 0;
           delay(100);
-          continue;
+          break;
         }
-
-        Serial.printf("Waiting for: %u bytes\n", len);
-        delay(20);
-        auto imgBuffer = new u_int8_t[len];
-        int read = 0;
-        unsigned counter = 0;
-        while (read < len)
-        {
-          unsigned chunkLen = client.read(imgBuffer + read, len - read);
-          if (chunkLen == 0)
-          {
-            if (counter++ == 200)
-            {
-              Serial.println("No data received");
-              counter = 0;
-              len = 0;
-              delay(100);
-              break;
-            }
-          }
-          else
-          {
-            counter = 0;
-          }
-          read += chunkLen;
-        }
-        if (len > 0)
-        {
-
-          Serial.println("Received data");
-          if (jpeg.openRAM(imgBuffer, len, drawCallback))
-          {
-            jpeg.setPixelType(RGB565_BIG_ENDIAN);
-
-            if (jpeg.decode(0, 0, 1))
-            {
-              Serial.println("Decoded!");
-            }
-            else
-            {
-              Serial.println("Could not decode jpeg");
-            }
-          }
-          else
-          {
-            Serial.println("Could not open jpeg");
-          }
-        }
-        delete[] imgBuffer;
       }
       else
       {
-        Serial.println("Invalid head");
-        while (client.read(buffer, 1))
+        counter = 0;
+      }
+      read += chunkLen;
+    }
+    if (len > 0)
+    {
+
+      Serial.println("Received data");
+      if (jpeg.openRAM(imgBuffer, len, drawCallback))
+      {
+        jpeg.setPixelType(RGB565_BIG_ENDIAN);
+
+        if (jpeg.decode(0, 0, 1))
         {
-          // read bytes until empty
-        };
-        memset(buffer, 0, sizeof(buffer));
+          Serial.println("Decoded!");
+        }
+        else
+        {
+          Serial.println("Could not decode jpeg");
+        }
+      }
+      else
+      {
+        Serial.println("Could not open jpeg");
       }
     }
     else
+    {
+      Serial.println("Received no or incomplete data");
+    }
+    delete[] imgBuffer;
+  }
+  else
+  {
+    Serial.println("Invalid head");
+    while (client.read(buffer, 1))
+    {
+      // read bytes until empty
+    };
+    memset(buffer, 0, sizeof(buffer));
+  }
+}
+
+// thread task to request and decode frame
+void handleVideo(void *)
+{
+  WiFiClient client;
+  for (;;)
+  {
+    while (!client.connected())
+    {
+      Serial.println("Waiting for client");
+      client = server.available();
       delay(100);
+    }
+    if (client.connected())
+    {
+      fetchFrame(client);
+    }
+    else
+    {
+      Serial.println("Client disconnected");
+      delay(100);
+    }
   }
 }
 
@@ -196,67 +225,13 @@ void setup()
   setupScreen();
   setupWiFi();
   xTaskCreatePinnedToCore(draw, "draw", 5000, nullptr, 0, nullptr, 0);
-  xTaskCreatePinnedToCore(fetchFrame, "fetchFrame", 5000, nullptr, 0, nullptr, 1);
+  xTaskCreatePinnedToCore(handleVideo, "handleVideo", 5000, nullptr, 0, nullptr, 1);
   setupServer();
   jpegBlock = new JPEGBlock;
 }
 
 void loop()
 {
-  // WiFiClient client = server.available();
-
-  // if (client)
-  // {
-  //   tft.println("Client connected!");
-  //   auto buffer = new byte[messageLen];
-  //   while (client.connected())
-  //   {
-  //     client.read(buffer, messageHeadLen);
-  //     if (checkHead(buffer))
-  //     {
-  //       createMessage(buffer);
-  //       client.write(buffer, messageLen);
-  //       Serial.println("Sent");
-  //     }
-
-  //     delay(10);
-  //   }
-  //   delete[] buffer;
-  // }
-  if (!client.connected())
-  {
-    wifi_sta_list_t stations;
-    tcpip_adapter_sta_list_t stationsAdapters;
-    esp_wifi_ap_get_sta_list(&stations);
-    tcpip_adapter_get_sta_list(&stations, &stationsAdapters);
-
-    if (stationsAdapters.num > 0)
-    {
-      Serial.println("-----------");
-      for (unsigned i = 0; i < stationsAdapters.num; i++)
-      {
-        tcpip_adapter_sta_info_t station = stationsAdapters.sta[i];
-        Serial.print((String) "[+] Device " + i + " | MAC : ");
-        Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
-        ip4_addr_t stationIP;
-        stationIP.addr = station.ip.addr;
-        Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
-      }
-
-      for (unsigned i = 0; i < stationsAdapters.num; i++)
-      {
-        ip4_addr_t stationIP;
-        stationIP.addr = stationsAdapters.sta[i].ip.addr;
-        Serial.println((String) "Trying :" + ip4addr_ntoa(&stationIP));
-
-        if (client.connect(ip4addr_ntoa(&stationIP), PORT))
-        {
-          Serial.println("Client disconnected");
-          break;
-        }
-      }
-    }
-  }
 
   delay(500);
 }
