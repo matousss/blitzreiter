@@ -82,7 +82,7 @@ bool checkHead(byte *);
 // CameraServer cameraServer = CameraServer();
 esp_err_t sendFrame(WiFiClient &client);
 
-byte buffer[32];
+byte buffer[16];
 
 void loop()
 {
@@ -100,9 +100,14 @@ void loop()
     Serial.println("Client connected!");
     while (client.connected())
     {
+      while (client.available() < messageHeadLen)
+      {
+        taskYIELD();
+      }
 
       if (client.read(buffer, messageHeadLen) == messageHeadLen && checkHead(buffer))
       {
+        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
         // int speed, steer;
         // memcpy(&speed, buffer + messageHeadLen, sizeof(int));
         // memcpy(&steer, buffer + messageHeadLen + sizeof(int), sizeof(int));
@@ -189,7 +194,7 @@ esp_err_t sendFrame(WiFiClient &client)
   delete[] message;
 
   client.write(imgBuffer, imgBufferLen);
-
+  client.flush();
   esp_camera_fb_return(fb);
 
   // int64_t fr_end = esp_timer_get_time();

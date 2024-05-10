@@ -50,7 +50,7 @@ struct JPEGBlock
 };
 
 JPEGBlock *jpegBlock = nullptr;
-byte buffer[32];
+byte buffer[16];
 WiFiClient client;
 
 volatile bool doDrawing = false;
@@ -96,12 +96,23 @@ void fetchFrame(void *)
     {
       memcpy(buffer, &messageHead, messageHeadLen);
       client.write(buffer, messageHeadLen);
+      client.flush();
+      memset(buffer, 0, sizeof(buffer));
+
+      while (client.available() < messageHeadLen + 4)
+      {
+        taskYIELD();
+      }
+
       client.read(buffer, messageHeadLen + 4);
       if (checkHead(buffer))
       {
         unsigned len = 0;
 
         memcpy(&len, buffer + messageHeadLen, 4);
+
+        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
+
         if (len > 10000)
         {
           Serial.println("Received len bigger than 10000 - that must be corruption >:(");
@@ -123,11 +134,13 @@ void fetchFrame(void *)
           unsigned chunkLen = client.read(imgBuffer + read, len - read);
           if (chunkLen == 0)
           {
-            if (counter++ == 1000)
+            if (counter++ == 200)
             {
               Serial.println("No data received");
               counter = 0;
               len = 0;
+              delay(100);
+              break;
             }
           }
           else
@@ -167,6 +180,7 @@ void fetchFrame(void *)
         {
           // read bytes until empty
         };
+        memset(buffer, 0, sizeof(buffer));
       }
     }
     else
@@ -185,26 +199,6 @@ void setup()
   xTaskCreatePinnedToCore(fetchFrame, "fetchFrame", 5000, nullptr, 0, nullptr, 1);
   setupServer();
   jpegBlock = new JPEGBlock;
-}
-
-void printAPClients()
-{
-  wifi_sta_list_t wifi_sta_list;
-  tcpip_adapter_sta_list_t adapter_sta_list;
-  esp_wifi_ap_get_sta_list(&wifi_sta_list);
-  tcpip_adapter_get_sta_list(&wifi_sta_list, &adapter_sta_list);
-
-  if (adapter_sta_list.num > 0)
-    Serial.println("-----------");
-  for (uint8_t i = 0; i < adapter_sta_list.num; i++)
-  {
-    tcpip_adapter_sta_info_t station = adapter_sta_list.sta[i];
-    Serial.print((String) "[+] Device " + i + " | MAC : ");
-    Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", station.mac[0], station.mac[1], station.mac[2], station.mac[3], station.mac[4], station.mac[5]);
-    ip4_addr_t stationIP;
-    stationIP.addr = station.ip.addr;
-    Serial.println((String) " | IP " + ip4addr_ntoa(&stationIP));
-  }
 }
 
 void loop()
@@ -254,9 +248,12 @@ void loop()
         ip4_addr_t stationIP;
         stationIP.addr = stationsAdapters.sta[i].ip.addr;
         Serial.println((String) "Trying :" + ip4addr_ntoa(&stationIP));
-        client.connect(ip4addr_ntoa(&stationIP), PORT);
 
-        Serial.println("Client disconnected");
+        if (client.connect(ip4addr_ntoa(&stationIP), PORT))
+        {
+          Serial.println("Client disconnected");
+          break;
+        }
       }
     }
   }
