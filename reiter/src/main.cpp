@@ -8,12 +8,21 @@
 #define WIFI_PSK "Genesis23"
 #define PORT 8686
 
+// left motor
+#define PIN_MOTOR_A1 14
+#define PIN_MOTOR_A2 15
+#define PIN_MOTOR_A_ENABLE 2
+
+// right motor
+#define PIN_MOTOR_B1 12
+#define PIN_MOTOR_B2 13
+#define PIN_MOTOR_B_ENABLE 3
+
 // Declarations
 void setupWiFi();
 void setupServer();
 
 void handleConnection(void *);
-
 // Network
 constexpr unsigned headLen = 5;
 
@@ -23,16 +32,32 @@ constexpr unsigned messageHeadLen = messageControlLen + 1;
 constexpr unsigned messageLen = messageHeadLen + 2 * sizeof(int);
 
 byte buffer[16];
+unsigned lastCommand = 0;
 
 // Motors
-volatile int speed = 0;
-volatile int steer = 0;
+int speed = 0;
+int steer = 0;
+void forward();
+void backward();
+void stop();
 
 void setup()
 {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
+
+  pinMode(PIN_MOTOR_A1, OUTPUT);
+  pinMode(PIN_MOTOR_A2, OUTPUT);
+  pinMode(PIN_MOTOR_B1, OUTPUT);
+  pinMode(PIN_MOTOR_B2, OUTPUT);
+  pinMode(PIN_MOTOR_A_ENABLE, OUTPUT);
+  pinMode(PIN_MOTOR_B_ENABLE, OUTPUT);
+
+  ledcSetup(0, 30000, 8);
+  ledcSetup(1, 30000, 8);
+  ledcAttachPin(PIN_MOTOR_A_ENABLE, 0);
+  ledcAttachPin(PIN_MOTOR_B_ENABLE, 1);
 
   camera_config_t config = getCamConfig();
 
@@ -67,7 +92,70 @@ void loop()
     setupWiFi();
     delay(500);
   }
-  delay(500);
+
+  if (millis() - lastCommand > 2000)
+  {
+    delay(100);
+    Serial.println("No command in 2000ms");
+    return;
+  }
+
+  if (abs(speed) > 30)
+  {
+    if (speed > 0)
+    {
+      forward();
+    }
+    else
+    {
+      backward();
+    }
+
+    unsigned lSpeed = abs(speed), rSpeed = abs(speed);
+    if (steer > 0)
+    {
+      // left turn
+      lSpeed -= steer;
+    }
+    else
+    {
+      // right turn
+      rSpeed += steer; // steer < 0
+    }
+    ledcWrite(0, lSpeed);
+    ledcWrite(1, rSpeed);
+  }
+  else
+  {
+    stop();
+  }
+  delay(10);
+}
+
+void forward()
+{
+  digitalWrite(PIN_MOTOR_A1, HIGH);
+  digitalWrite(PIN_MOTOR_A2, LOW);
+  digitalWrite(PIN_MOTOR_B1, HIGH);
+  digitalWrite(PIN_MOTOR_B2, LOW);
+}
+
+void backward()
+{
+  digitalWrite(PIN_MOTOR_A1, LOW);
+  digitalWrite(PIN_MOTOR_A2, HIGH);
+  digitalWrite(PIN_MOTOR_B1, LOW);
+  digitalWrite(PIN_MOTOR_B2, HIGH);
+}
+
+void stop()
+{
+  digitalWrite(PIN_MOTOR_A1, LOW);
+  digitalWrite(PIN_MOTOR_A2, LOW);
+  digitalWrite(PIN_MOTOR_B1, LOW);
+  digitalWrite(PIN_MOTOR_B2, LOW);
+  ledcWrite(0, 0);
+  ledcWrite(1, 0);
 }
 
 void setupWiFi()
@@ -208,6 +296,7 @@ void handleConnection(void *)
           memcpy(&speed, buffer, sizeof(int));
           memcpy(&steer, buffer + sizeof(int), sizeof(int));
           Serial.printf("speed: %d, steer: %d\n", speed, steer);
+          lastCommand = millis();
         }
       }
       else
