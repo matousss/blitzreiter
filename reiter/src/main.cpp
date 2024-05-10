@@ -102,6 +102,11 @@ void loop()
     {
       while (client.available() < messageHeadLen)
       {
+        if (!client.connected() || WiFi.status() != WL_CONNECTED)
+        {
+          Serial.println("Disconnecting while waiting for request");
+          return;
+        }
         taskYIELD();
       }
 
