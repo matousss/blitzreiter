@@ -112,18 +112,21 @@ void loop()
     }
 
     unsigned lSpeed = abs(speed), rSpeed = abs(speed);
-    if (steer > 0)
+    if (abs(steer) > 10)
     {
-      // left turn
-      lSpeed -= steer;
+      if (steer > 0)
+      {
+        // left turn
+        lSpeed -= (abs(steer) - 10);
+      }
+      else
+      {
+        // right turn
+        rSpeed -= (abs(steer) - 10);
+      }
     }
-    else
-    {
-      // right turn
-      rSpeed += steer; // steer < 0
-    }
-    ledcWrite(0, lSpeed);
-    ledcWrite(1, rSpeed);
+    ledcWrite(0, lSpeed * .75);
+    ledcWrite(1, rSpeed * .75);
   }
   else
   {
