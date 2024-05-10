@@ -193,18 +193,31 @@ void fetchFrame(WiFiClient &client)
   }
 }
 
+void waitForClient(WiFiClient &client)
+{
+  unsigned start = millis();
+  while (!client.connected())
+  {
+    if (millis() - start > 500)
+    {
+      Serial.println("Waiting for client");
+      tft.fillRect(0, 0, 320, 16, TFT_RED);
+      tft.setCursor(0, 0);
+      tft.println("Waiting for connection...");
+      start = millis();
+    }
+    client = server.available();
+    delay(100);
+  }
+}
+
 // thread task to request and decode frame
 void handleVideo(void *)
 {
   WiFiClient client;
   for (;;)
   {
-    while (!client.connected())
-    {
-      Serial.println("Waiting for client");
-      client = server.available();
-      delay(100);
-    }
+    waitForClient(client);
     if (client.connected())
     {
       fetchFrame(client);
