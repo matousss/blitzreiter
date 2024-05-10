@@ -11,6 +11,8 @@
 void setupWiFi();
 void setupServer();
 
+void handleVideo(void *);
+
 void setup()
 {
   Serial.begin(115200);
@@ -65,6 +67,7 @@ void setup()
 
   setupWiFi();
   // setupServer();
+  xTaskCreatePinnedToCore(handleVideo, "handleVideo", 5000, nullptr, 0, nullptr, 1);
 }
 
 constexpr unsigned PORT = 8686;
@@ -83,7 +86,6 @@ bool checkHead(byte *);
 esp_err_t sendFrame(WiFiClient &client);
 
 byte buffer[16];
-WiFiClient client;
 
 void loop()
 {
@@ -93,39 +95,6 @@ void loop()
     setupWiFi();
     delay(500);
   }
-
-  Serial.println("Waiting for connection...");
-  if (client.connect(WiFi.gatewayIP(), PORT))
-  {
-    Serial.println("Client connected!");
-    while (client.connected())
-    {
-      while (client.available() < messageHeadLen)
-      {
-        if (!client.connected() || WiFi.status() != WL_CONNECTED)
-        {
-          Serial.println("Disconnecting while waiting for request");
-          return;
-        }
-        taskYIELD();
-      }
-
-      if (client.read(buffer, messageHeadLen) == messageHeadLen && checkHead(buffer))
-      {
-        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
-        // int speed, steer;
-        // memcpy(&speed, buffer + messageHeadLen, sizeof(int));
-        // memcpy(&steer, buffer + messageHeadLen + sizeof(int), sizeof(int));
-        // Serial.printf("speed: %d, steer: %d\n", speed, steer);
-
-        sendFrame(client);
-      }
-      else
-        Serial.println("Invalid head");
-      delay(10);
-    }
-  }
-
   delay(500);
 }
 
@@ -199,4 +168,61 @@ esp_err_t sendFrame(WiFiClient &client)
 
   // last_frame = 0;
   return res;
+}
+
+void handleVideo(void *)
+{
+  WiFiClient client;
+  for (;;)
+  {
+    if (!client.connected())
+    {
+      Serial.println("Waiting for connection...");
+      for (;;)
+      {
+        if (client.connect(WiFi.gatewayIP(), PORT))
+        {
+          Serial.println("Client connected!");
+          break;
+        }
+
+        Serial.println("Connection not enstablished");
+        delay(100);
+      }
+    }
+
+    unsigned start = millis();
+    while (client.available() < messageHeadLen)
+    {
+      if (!client.connected() || WiFi.status() != WL_CONNECTED)
+      {
+        Serial.println("Disconnected while waiting for request");
+      }
+      if (millis() - start > 1000)
+      {
+        Serial.println("Request took more than 1000ms (timeout)");
+        client.stop();
+        break;
+      }
+
+      taskYIELD();
+    }
+
+    if (client.connected())
+    {
+      if (client.read(buffer, messageHeadLen) == messageHeadLen && checkHead(buffer))
+      {
+        memset(buffer + messageHeadLen, 0, sizeof(buffer) - messageHeadLen);
+        // int speed, steer;
+        // memcpy(&speed, buffer + messageHeadLen, sizeof(int));
+        // memcpy(&steer, buffer + messageHeadLen + sizeof(int), sizeof(int));
+        // Serial.printf("speed: %d, steer: %d\n", speed, steer);
+
+        sendFrame(client);
+      }
+      else
+        Serial.println("Invalid head");
+    }
+    delay(10);
+  }
 }
