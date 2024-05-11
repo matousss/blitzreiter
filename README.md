@@ -35,7 +35,7 @@ Pro urychlení navázání spojení zapněte nejdříve ovladač a po pár vteř
 ### Car / Vozítko
 
 - ESP32-CAM AI-Thinker
-- LN298 Motor driver
+- L298N Motor driver
 - Small breadboard
 - 2x DC 3-6v Motor with gearbox
 - 2x Wheel with tire
