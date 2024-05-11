@@ -8,7 +8,7 @@ Remotely controlled robotic car build with ESP32
 
 This repository contains source code for semestral work in subject BI-ARD 2023/24. Repository contans two [PlatformIO](https://platformio.org/) projects.
 
-- blitzreiter - contains code for esp controlling car robot
+- reiter - contains code for esp controlling car robot
 - beobachter - contains code for remote control
 
 Project also contains testing servers written in Python, which were used during development.
@@ -21,7 +21,7 @@ To speedup connection turn the controller on first, wait few seconds and then sw
 
 Tento repozitář obsahuje zdrojový kód semestrální práce v předmětu BI-ARD 2023/24. Repozitář obsahuje dva [PlatformIO](https://platformio.org/) projekty.
 
-- blitzreiter - obsahuje kód pro esp ovládající robotické vozítko
+- reiter - obsahuje kód pro esp ovládající robotické vozítko
 - beobachter - obsahuje kód pro dálkové ovládání
 
 Repozitář také obsahuje testovací servery napsané v Pythonu, které byli použity během ranných fází vývoje.
@@ -39,7 +39,7 @@ Pro urychlení navázání spojení zapněte nejdříve ovladač a po pár vteř
 - Small breadboard
 - 2x DC 3-6v Motor with gearbox
 - 2x Wheel with tire
-- 2x Ceramic capacitor 104 (for motor noise reduction)
+- 2x Ceramic capacitor 104 _(for motor noise reduction)_
 - Omnidirectional wheel
 - Acrylic body
 - 2x Li-ion battery 18650
@@ -51,6 +51,14 @@ Pro urychlení navázání spojení zapněte nejdříve ovladač a po pár vteř
 - Display 2,4" 240x320 SPI TFT ILI9341
 - PS2 Joystick module
 - 100uF polarized capacitor _(for voltage smoothing)_
+
+### Motor driver / Řadič motorů
+
+#### [EN]
+H-bridge L298N is used with jumper **inplace** to provide 5V to the ESP32-Cam and around 4V to the motors. In this case using two 18650 cells provides in series 7,2-7,4V, but motor driver drops voltage by 2-4V to approx. 3,2-5,4V for motors.
+
+#### [CZ]
+H-můstek L298N je použit **s jumperem**, aby z něj bylo možné napájet 5V modul ESP32-Cam a zhruba 4V motory. Dva články 18650 poskytují v sériovém zapojení přibližne 7,2-7,4V, ale obvod L298N způsobí pokles o 2-4V, což znamená že napětí na motorech bude v mezích 3,2-5,4V.
 
 ### Wiring / Zapojení
 
